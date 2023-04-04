@@ -9,11 +9,20 @@ pub enum VarType {
     OpDiv,
 }
 
+pub trait GetZeroGrad<T> {
+    /// Get zero gradient value according to the value.
+    /// For scalar, normally it returns zero. For ndarray, it will return
+    /// ndarray of zeros with the same shape as the data itself.
+    fn get_zero_grad(&self) -> T;
+}
+
 #[derive(Debug)]
 pub struct Variable {
     pub(crate) data_id: Uuid,
     pub(crate) deps: Vec<Box<Variable>>,
+    pub(crate) is_leaf: bool,
     pub(crate) label: String,
+    pub(crate) requires_grad: bool,
     pub(crate) var_type: VarType,
 }
 
@@ -22,7 +31,9 @@ impl Clone for Variable {
         Self {
             data_id: self.data_id,
             deps: self.deps.clone(),
+            is_leaf: self.is_leaf,
             label: self.label.clone(),
+            requires_grad: self.requires_grad,
             var_type: self.var_type.clone(),
         }
     }
@@ -67,7 +78,9 @@ impl<'a> Default for Variable {
         Self {
             data_id: Uuid::new_v4(),
             deps: Default::default(),
+            is_leaf: true,
             label: Default::default(),
+            requires_grad: false,
             var_type: VarType::Leaf,
         }
     }
