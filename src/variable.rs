@@ -1,4 +1,8 @@
+use std::fmt::Debug;
+
 use uuid::Uuid;
+
+use crate::context::{ArithmeticOps, Context};
 
 #[derive(Copy, Clone, Debug)]
 pub enum VarType {
@@ -16,19 +20,49 @@ pub trait GetZeroGrad<T> {
     fn get_zero_grad(&self) -> T;
 }
 
-#[derive(Debug)]
-pub struct Variable {
-    pub(crate) data_id: Uuid,
-    pub(crate) deps: Vec<Box<Variable>>,
-    pub(crate) is_leaf: bool,
-    pub(crate) label: String,
-    pub(crate) requires_grad: bool,
-    pub(crate) var_type: VarType,
+#[derive(Clone)]
+pub struct BackwardFn<T> {
+    pub func: fn(context: &mut Context<T>, &mut Variable<T>),
 }
 
-impl Clone for Variable {
+// #[derive(Clone)]
+// type BackwardFn<T> = fn(context: &mut Context<T>, &mut Variable<T>);
+impl<T> Debug for BackwardFn<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<BackwardFn>")
+    }
+}
+
+fn add_backward<T: ArithmeticOps>(_context: &mut Context<T>, _parent: &mut Variable<T>) {
+    todo!()
+    // let lbf = move || {
+    //     let parent_grad = *self.gradient_map.get(&parent_id.clone()).unwrap();
+    //     let mut l_grad = *self.gradient_map.get(&l_id.clone()).unwrap();
+    //     let mut r_grad = *self.gradient_map.get(&rdep.data_id).unwrap();
+
+    //     l_grad = l_grad + parent_grad;
+    //     self.gradient_map.insert(ldep.data_id, l_grad);
+
+    //     r_grad = r_grad + parent_grad;
+    //     self.gradient_map.insert(rdep.data_id, r_grad);
+    // };
+}
+
+#[derive(Debug)]
+pub struct Variable<T> {
+    pub backward_fn: Option<BackwardFn<T>>,
+    pub data_id: Uuid,
+    pub deps: Vec<Box<Variable<T>>>,
+    pub is_leaf: bool,
+    pub label: String,
+    pub requires_grad: bool,
+    pub var_type: VarType,
+}
+
+impl<T: ArithmeticOps> Clone for Variable<T> {
     fn clone(&self) -> Self {
         Self {
+            backward_fn: self.backward_fn.clone(),
             data_id: self.data_id,
             deps: self.deps.clone(),
             is_leaf: self.is_leaf,
@@ -39,29 +73,44 @@ impl Clone for Variable {
     }
 }
 
-impl<'a> Variable {
-    fn make_binop(&self, other: &Variable, op: VarType) -> Variable {
+impl<'a, T: ArithmeticOps> Variable<T> {
+    fn make_binop(
+        &self,
+        other: &Variable<T>,
+        op: VarType,
+        backward_func: Option<BackwardFn<T>>,
+    ) -> Variable<T> {
         let mut new_var = Variable::default();
         new_var.var_type = op;
         new_var.deps.push(Box::new(self.clone()));
         new_var.deps.push(Box::new(other.clone()));
+        new_var.requires_grad = self.requires_grad || other.requires_grad;
+        new_var.is_leaf = false;
+        new_var.backward_fn = backward_func;
+
         new_var
     }
 
-    pub fn add(&self, other: &Variable) -> Variable {
-        self.make_binop(other, VarType::OpAdd)
+    pub fn add(&self, other: &Variable<T>) -> Variable<T> {
+        self.make_binop(
+            other,
+            VarType::OpAdd,
+            Some(BackwardFn {
+                func: add_backward::<T>,
+            }),
+        )
     }
 
-    pub fn sub(&self, other: &Variable) -> Variable {
-        self.make_binop(other, VarType::OpSub)
+    pub fn sub(&self, other: &Variable<T>) -> Variable<T> {
+        self.make_binop(other, VarType::OpSub, None)
     }
 
-    pub fn mul(&self, other: &Variable) -> Variable {
-        self.make_binop(other, VarType::OpMul)
+    pub fn mul(&self, other: &Variable<T>) -> Variable<T> {
+        self.make_binop(other, VarType::OpMul, None)
     }
 
-    pub fn div(&self, other: &Variable) -> Variable {
-        self.make_binop(other, VarType::OpDiv)
+    pub fn div(&self, other: &Variable<T>) -> Variable<T> {
+        self.make_binop(other, VarType::OpDiv, None)
     }
 
     pub fn set_label(&mut self, label: String) {
@@ -73,9 +122,10 @@ impl<'a> Variable {
     }
 }
 
-impl<'a> Default for Variable {
+impl<'a, T: ArithmeticOps> Default for Variable<T> {
     fn default() -> Self {
         Self {
+            backward_fn: None,
             data_id: Uuid::new_v4(),
             deps: Default::default(),
             is_leaf: true,
@@ -86,10 +136,10 @@ impl<'a> Default for Variable {
     }
 }
 
-impl std::ops::Add<&Variable> for &Variable {
-    type Output = Variable;
+impl<T: ArithmeticOps> std::ops::Add<&Variable<T>> for &Variable<T> {
+    type Output = Variable<T>;
 
-    fn add(self, rhs: &Variable) -> Self::Output {
+    fn add(self, rhs: &Variable<T>) -> Self::Output {
         self.add(rhs)
     }
 }
@@ -105,8 +155,8 @@ mod tests {
 
     #[test]
     fn test_creation() {
-        let mut a: Variable = Default::default();
-        let mut b: Variable = Default::default();
+        let mut a: Variable<i32> = Default::default();
+        let mut b: Variable<i32> = Default::default();
         a.set_label("a".to_string());
         b.set_label("b".to_string());
 

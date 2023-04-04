@@ -1,6 +1,7 @@
 use crate::variable::{GetZeroGrad, VarType, Variable};
 use paste::paste;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use uuid::Uuid;
 
@@ -25,7 +26,7 @@ macro_rules! make_trait {
 
 make_trait!(ArithmeticOps, Add, Mul, Neg, Sub, Div);
 
-impl<T: ArithmeticOps + GetZeroGrad<T>> Context<T> {
+impl<T: ArithmeticOps + GetZeroGrad<T> + Debug> Context<T> {
     pub fn new() -> Self {
         Context {
             data_map: HashMap::new(),
@@ -34,11 +35,22 @@ impl<T: ArithmeticOps + GetZeroGrad<T>> Context<T> {
         }
     }
 
+    fn handle_binop(&mut self, var: &mut Variable<T>, op: impl Fn(T, T) -> T) {
+        let ldep = &var.deps[0];
+        let lval = self.data_map[&ldep.data_id];
+
+        let rdep = &var.deps[1];
+        let rval = self.data_map[&rdep.data_id];
+
+        // Insert the computed numerical data to the data map
+        self.data_map.insert(var.data_id, op(lval, rval));
+    }
+
     fn topological_sort_helper(
         &self,
-        variable: &Variable,
+        variable: &Variable<T>,
         visited: &mut HashSet<Uuid>,
-        stack: &mut VecDeque<Variable>,
+        stack: &mut VecDeque<Variable<T>>,
         allow_revisit: bool,
     ) {
         if !allow_revisit {
@@ -56,7 +68,7 @@ impl<T: ArithmeticOps + GetZeroGrad<T>> Context<T> {
         stack.push_back(variable.clone());
     }
 
-    pub fn topological_sort(&self, entry: &Variable, allow_revisit: bool) -> Vec<Variable> {
+    fn topological_sort(&self, entry: &Variable<T>, allow_revisit: bool) -> Vec<Variable<T>> {
         let mut visited = HashSet::new();
         let mut stack = VecDeque::new();
 
@@ -65,19 +77,27 @@ impl<T: ArithmeticOps + GetZeroGrad<T>> Context<T> {
         stack.into_iter().collect()
     }
 
-    fn handle_binop(&mut self, var: &mut Variable, op: impl Fn(T, T) -> T) {
-        let ldep = &var.deps[0];
-        let rdep = &var.deps[1];
-        let lval = self.data_map[&ldep.data_id];
-        let rval = self.data_map[&rdep.data_id];
-        var.requires_grad = ldep.requires_grad || rdep.requires_grad;
+    pub fn backward(&mut self, root: &Variable<T>) {
+        self.eval_graph(&root);
 
-        // Insert the computed numerical data to the data map
-        self.data_map.insert(var.data_id, op(lval, rval));
+        // Set initial downstream gradient for root
+        let root_data_ref = self.data_map.get(&root.data_id).unwrap();
+        self.gradient_map
+            .insert(root.data_id, root_data_ref.get_zero_grad());
+
+        // backward propagation operates on reverse-topological sorted graph
+        let mut sorted = self.topological_sort(root, false);
+        sorted.reverse();
+        // for mut var in sorted {
+        //     match var.backward_fn {
+        //         Some(backward_fn) => (backward_fn.func)(self, &mut var.clone()),
+        //         None => (),
+        //     }
+        // }
     }
 
     /// Evaluate computational graph and populate the actual numerical data
-    pub fn eval_graph(&mut self, root: &Variable) {
+    pub fn eval_graph(&mut self, root: &Variable<T>) {
         let sorted = self.topological_sort(root, false);
         for mut var in sorted {
             // Populate the numerical data for `var` based on various ops.
@@ -100,15 +120,15 @@ impl<T: ArithmeticOps + GetZeroGrad<T>> Context<T> {
         self.evaluated = true;
     }
 
-    pub fn value_of(&mut self, variable: &Variable) -> T {
+    pub fn value_of(&mut self, variable: &Variable<T>) -> T {
         self.eval_graph(&variable);
         let val = self.data_map.get(&variable.data_id);
 
         *val.unwrap()
     }
 
-    pub fn var(&mut self, data: T) -> Variable {
-        let var: Variable = Default::default();
+    pub fn var(&mut self, data: T) -> Variable<T> {
+        let var: Variable<T> = Default::default();
         self.data_map.insert(var.data_id, data);
 
         var
@@ -184,8 +204,24 @@ mod test {
         let z = &x + &y;
         c.eval_graph(&z);
 
+        assert!(y.requires_grad);
+        assert!(z.requires_grad);
         assert!(c.gradient_map.get(&y.data_id) == Some(&0));
         assert!(c.gradient_map.get(&x.data_id) == None);
         assert!(c.gradient_map.get(&z.data_id) == Some(&0));
+    }
+
+    #[test]
+    fn test_backward() {
+        let mut c = Context::new();
+        let mut x = c.var(1);
+        x.requires_grad = true;
+        let y = c.var(2);
+        let z = &x + &y;
+
+        assert!(z.requires_grad);
+        println!("{:?}", z);
+
+        c.backward(&z);
     }
 }
