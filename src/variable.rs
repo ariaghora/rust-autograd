@@ -1,10 +1,12 @@
 use uuid::Uuid;
 
 #[derive(Copy, Clone, Debug)]
-pub enum Op {
-    NopScalar,
-    Add,
-    Mul,
+pub enum VarType {
+    Leaf,
+    OpAdd,
+    OpSub,
+    OpMul,
+    OpDiv,
 }
 
 #[derive(Debug)]
@@ -12,7 +14,7 @@ pub struct Variable {
     pub(crate) data_id: Uuid,
     pub(crate) deps: Vec<Box<Variable>>,
     pub(crate) label: String,
-    pub(crate) op: Op,
+    pub(crate) var_type: VarType,
 }
 
 impl Clone for Variable {
@@ -21,26 +23,34 @@ impl Clone for Variable {
             data_id: self.data_id,
             deps: self.deps.clone(),
             label: self.label.clone(),
-            op: self.op.clone(),
+            var_type: self.var_type.clone(),
         }
     }
 }
 
-impl<'a, 'b> Variable {
-    pub fn add(&'b self, other: &'b Variable) -> Variable {
+impl<'a> Variable {
+    fn make_binop(&self, other: &Variable, op: VarType) -> Variable {
         let mut new_var = Variable::default();
-        new_var.op = Op::Add;
+        new_var.var_type = op;
         new_var.deps.push(Box::new(self.clone()));
         new_var.deps.push(Box::new(other.clone()));
         new_var
     }
 
-    pub fn mul(&'b self, other: &'b Variable) -> Variable {
-        let mut new_var = Variable::default();
-        new_var.op = Op::Mul;
-        new_var.deps.push(Box::new(self.clone()));
-        new_var.deps.push(Box::new(other.clone()));
-        new_var
+    pub fn add(&self, other: &Variable) -> Variable {
+        self.make_binop(other, VarType::OpAdd)
+    }
+
+    pub fn sub(&self, other: &Variable) -> Variable {
+        self.make_binop(other, VarType::OpSub)
+    }
+
+    pub fn mul(&self, other: &Variable) -> Variable {
+        self.make_binop(other, VarType::OpMul)
+    }
+
+    pub fn div(&self, other: &Variable) -> Variable {
+        self.make_binop(other, VarType::OpDiv)
     }
 
     pub fn set_label(&mut self, label: String) {
@@ -58,7 +68,7 @@ impl<'a> Default for Variable {
             data_id: Uuid::new_v4(),
             deps: Default::default(),
             label: Default::default(),
-            op: Op::NopScalar,
+            var_type: VarType::Leaf,
         }
     }
 }
