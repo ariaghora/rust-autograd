@@ -13,39 +13,46 @@ pub enum VarType {
     OpDiv,
 }
 
-pub trait GetZeroGrad<T> {
+pub trait GetGrad<T> {
     /// Get zero gradient value according to the value.
     /// For scalar, normally it returns zero. For ndarray, it will return
     /// ndarray of zeros with the same shape as the data itself.
     fn get_zero_grad(&self) -> T;
+
+    /// Get initial downstream gradient when the node acts as root node.
+    /// Usually one or array of ones.
+    fn get_initial_grad(&self) -> T;
 }
 
 #[derive(Clone)]
 pub struct BackwardFn<T> {
-    pub func: fn(context: &mut Context<T>, &mut Variable<T>),
+    pub func: fn(context: &mut Context<T>, &Variable<T>),
 }
 
-// #[derive(Clone)]
-// type BackwardFn<T> = fn(context: &mut Context<T>, &mut Variable<T>);
 impl<T> Debug for BackwardFn<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<BackwardFn>")
     }
 }
 
-fn add_backward<T: ArithmeticOps>(_context: &mut Context<T>, _parent: &mut Variable<T>) {
-    todo!()
-    // let lbf = move || {
-    //     let parent_grad = *self.gradient_map.get(&parent_id.clone()).unwrap();
-    //     let mut l_grad = *self.gradient_map.get(&l_id.clone()).unwrap();
-    //     let mut r_grad = *self.gradient_map.get(&rdep.data_id).unwrap();
+fn add_backward<T: ArithmeticOps>(context: &mut Context<T>, parent: &Variable<T>) {
+    let parent_grad = *context.gradient_map.get(&parent.data_id).unwrap();
 
-    //     l_grad = l_grad + parent_grad;
-    //     self.gradient_map.insert(ldep.data_id, l_grad);
+    let ldep = &parent.deps[0];
+    if ldep.requires_grad {
+        let l_id = ldep.data_id;
+        let mut l_grad = *context.gradient_map.get(&l_id).unwrap();
+        l_grad = l_grad + parent_grad;
+        context.gradient_map.insert(ldep.data_id, l_grad);
+    }
 
-    //     r_grad = r_grad + parent_grad;
-    //     self.gradient_map.insert(rdep.data_id, r_grad);
-    // };
+    let rdep = &parent.deps[1];
+    if rdep.requires_grad {
+        let r_id = rdep.data_id;
+        let mut r_grad = *context.gradient_map.get(&r_id).unwrap();
+        r_grad = r_grad + parent_grad;
+        context.gradient_map.insert(rdep.data_id, r_grad);
+    }
 }
 
 #[derive(Debug)]

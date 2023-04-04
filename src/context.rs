@@ -1,4 +1,4 @@
-use crate::variable::{GetZeroGrad, VarType, Variable};
+use crate::variable::{GetGrad, VarType, Variable};
 use paste::paste;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct Context<T> {
-    data_map: HashMap<uuid::Uuid, T>,
-    gradient_map: HashMap<uuid::Uuid, T>,
-    evaluated: bool,
+    pub data_map: HashMap<uuid::Uuid, T>,
+    pub gradient_map: HashMap<uuid::Uuid, T>,
+    pub evaluated: bool,
 }
 
 macro_rules! make_trait {
@@ -26,7 +26,7 @@ macro_rules! make_trait {
 
 make_trait!(ArithmeticOps, Add, Mul, Neg, Sub, Div);
 
-impl<T: ArithmeticOps + GetZeroGrad<T> + Debug> Context<T> {
+impl<T: ArithmeticOps + GetGrad<T> + Debug> Context<T> {
     pub fn new() -> Self {
         Context {
             data_map: HashMap::new(),
@@ -83,17 +83,19 @@ impl<T: ArithmeticOps + GetZeroGrad<T> + Debug> Context<T> {
         // Set initial downstream gradient for root
         let root_data_ref = self.data_map.get(&root.data_id).unwrap();
         self.gradient_map
-            .insert(root.data_id, root_data_ref.get_zero_grad());
+            .insert(root.data_id, root_data_ref.get_initial_grad());
 
         // backward propagation operates on reverse-topological sorted graph
         let mut sorted = self.topological_sort(root, false);
         sorted.reverse();
-        // for mut var in sorted {
-        //     match var.backward_fn {
-        //         Some(backward_fn) => (backward_fn.func)(self, &mut var.clone()),
-        //         None => (),
-        //     }
-        // }
+
+        for i in 0..sorted.len() {
+            let var = &sorted[i].clone();
+            match &var.backward_fn {
+                Some(backward_fn) => (backward_fn.func)(self, &var.clone()),
+                None => (),
+            }
+        }
     }
 
     /// Evaluate computational graph and populate the actual numerical data
@@ -120,6 +122,13 @@ impl<T: ArithmeticOps + GetZeroGrad<T> + Debug> Context<T> {
         self.evaluated = true;
     }
 
+    pub fn grad_of(&mut self, variable: &Variable<T>) -> T {
+        // TODO: handle None
+        let val = self.gradient_map.get(&variable.data_id);
+
+        *val.unwrap()
+    }
+
     pub fn value_of(&mut self, variable: &Variable<T>) -> T {
         self.eval_graph(&variable);
         let val = self.data_map.get(&variable.data_id);
@@ -137,13 +146,16 @@ impl<T: ArithmeticOps + GetZeroGrad<T> + Debug> Context<T> {
 
 #[cfg(test)]
 mod test {
-    use crate::variable::GetZeroGrad;
+    use crate::variable::GetGrad;
 
     use super::Context;
 
-    impl GetZeroGrad<i32> for i32 {
+    impl GetGrad<i32> for i32 {
         fn get_zero_grad(&self) -> i32 {
             0
+        }
+        fn get_initial_grad(&self) -> i32 {
+            1
         }
     }
 
@@ -218,10 +230,13 @@ mod test {
         x.requires_grad = true;
         let y = c.var(2);
         let z = &x + &y;
+        c.backward(&z);
 
         assert!(z.requires_grad);
-        println!("{:?}", z);
+        assert!(c.grad_of(&x) == 1);
 
+        let z = &x.add(&x).add(&x);
         c.backward(&z);
+        assert!(c.grad_of(&x) == 3);
     }
 }
