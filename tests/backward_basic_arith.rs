@@ -31,9 +31,12 @@ mod test {
         assert!(z.requires_grad);
         assert!(c.grad_of(&x) == 3);
 
-        // z = x^3
+        //     z = x^3
         // dz/dx = 3 * x^2
-        // x = 2 ==> dz/dx = 3 * 2^2 = 12
+        //
+        // when x = 2:
+        // dz/dx = 3 * 2^2
+        //       = 12
         let z = &x.mul(&x).mul(&x);
         c.backward(&z);
         assert!(c.grad_of(&x) == 12);
