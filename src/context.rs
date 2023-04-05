@@ -11,7 +11,7 @@ pub struct Context<T> {
     pub evaluated: bool,
 }
 
-impl<T: ArithmeticOps + GetGrad<T> + Debug> Context<T> {
+impl<T: ArithmeticOps + GetGrad + Debug> Context<T> {
     pub fn new() -> Self {
         Context {
             data_map: HashMap::new(),

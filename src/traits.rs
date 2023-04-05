@@ -15,19 +15,19 @@ macro_rules! make_arithmetic_ops_trait {
 
 make_arithmetic_ops_trait!(ArithmeticOps, Add, Mul, Neg, Sub, Div);
 
-pub trait GetGrad<T> {
+pub trait GetGrad {
     /// Get zero gradient value according to the value.
     /// For scalar, normally it returns zero. For ndarray, it will return
     /// ndarray of zeros with the same shape as the data itself.
-    fn get_zero_grad(&self) -> T;
+    fn get_zero_grad(&self) -> Self;
 
     /// Get initial downstream gradient when the node acts as root node.
     /// Usually one or array of ones.
-    fn get_initial_grad(&self) -> T;
+    fn get_initial_grad(&self) -> Self;
 }
 
 /// Helper when we want to use i32 as the data type
-impl GetGrad<i32> for i32 {
+impl GetGrad for i32 {
     fn get_zero_grad(&self) -> i32 {
         0
     }
