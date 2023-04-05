@@ -1,8 +1,14 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    ops::{Add, Mul},
+};
 
 use uuid::Uuid;
 
-use crate::context::{ArithmeticOps, Context};
+use crate::{
+    backward_funcs::{self, BackwardFn},
+    traits::ArithmeticOps,
+};
 
 #[derive(Copy, Clone, Debug)]
 pub enum VarType {
@@ -11,48 +17,6 @@ pub enum VarType {
     OpSub,
     OpMul,
     OpDiv,
-}
-
-pub trait GetGrad<T> {
-    /// Get zero gradient value according to the value.
-    /// For scalar, normally it returns zero. For ndarray, it will return
-    /// ndarray of zeros with the same shape as the data itself.
-    fn get_zero_grad(&self) -> T;
-
-    /// Get initial downstream gradient when the node acts as root node.
-    /// Usually one or array of ones.
-    fn get_initial_grad(&self) -> T;
-}
-
-#[derive(Clone)]
-pub struct BackwardFn<T> {
-    pub func: fn(context: &mut Context<T>, &Variable<T>),
-}
-
-impl<T> Debug for BackwardFn<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<BackwardFn>")
-    }
-}
-
-fn add_backward<T: ArithmeticOps>(context: &mut Context<T>, parent: &Variable<T>) {
-    let parent_grad = *context.gradient_map.get(&parent.data_id).unwrap();
-
-    let ldep = &parent.deps[0];
-    if ldep.requires_grad {
-        let l_id = ldep.data_id;
-        let mut l_grad = *context.gradient_map.get(&l_id).unwrap();
-        l_grad = l_grad + parent_grad;
-        context.gradient_map.insert(ldep.data_id, l_grad);
-    }
-
-    let rdep = &parent.deps[1];
-    if rdep.requires_grad {
-        let r_id = rdep.data_id;
-        let mut r_grad = *context.gradient_map.get(&r_id).unwrap();
-        r_grad = r_grad + parent_grad;
-        context.gradient_map.insert(rdep.data_id, r_grad);
-    }
 }
 
 #[derive(Debug)]
@@ -103,7 +67,8 @@ impl<'a, T: ArithmeticOps> Variable<T> {
             other,
             VarType::OpAdd,
             Some(BackwardFn {
-                func: add_backward::<T>,
+                func: backward_funcs::add_backward::<T>,
+                name: "Add".to_string(),
             }),
         )
     }
@@ -113,7 +78,14 @@ impl<'a, T: ArithmeticOps> Variable<T> {
     }
 
     pub fn mul(&self, other: &Variable<T>) -> Variable<T> {
-        self.make_binop(other, VarType::OpMul, None)
+        self.make_binop(
+            other,
+            VarType::OpMul,
+            Some(BackwardFn {
+                func: backward_funcs::mul_backward::<T>,
+                name: "Mul".to_string(),
+            }),
+        )
     }
 
     pub fn div(&self, other: &Variable<T>) -> Variable<T> {
@@ -143,7 +115,7 @@ impl<'a, T: ArithmeticOps> Default for Variable<T> {
     }
 }
 
-impl<T: ArithmeticOps> std::ops::Add<&Variable<T>> for &Variable<T> {
+impl<T: ArithmeticOps> Add<&Variable<T>> for &Variable<T> {
     type Output = Variable<T>;
 
     fn add(self, rhs: &Variable<T>) -> Self::Output {
@@ -151,8 +123,12 @@ impl<T: ArithmeticOps> std::ops::Add<&Variable<T>> for &Variable<T> {
     }
 }
 
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+impl<T: ArithmeticOps> Mul<&Variable<T>> for &Variable<T> {
+    type Output = Variable<T>;
+
+    fn mul(self, rhs: &Variable<T>) -> Self::Output {
+        self.mul(rhs)
+    }
 }
 
 #[cfg(test)]

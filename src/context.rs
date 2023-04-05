@@ -1,8 +1,7 @@
-use crate::variable::{GetGrad, VarType, Variable};
-use paste::paste;
+use crate::traits::{ArithmeticOps, GetGrad};
+use crate::variable::{VarType, Variable};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
-use std::ops::{Add, Div, Mul, Neg, Sub};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -11,20 +10,6 @@ pub struct Context<T> {
     pub gradient_map: HashMap<uuid::Uuid, T>,
     pub evaluated: bool,
 }
-
-macro_rules! make_trait {
-    ($name:ident, $($trait:path),+ $(,)?) => {
-        paste! {
-            // Create the custom trait that combines the required traits
-            pub trait $name: $($trait<Output = Self> +)+ Copy + Clone {}
-
-            // Implement the custom trait for all types that satisfy the trait bounds
-            impl<T: $($trait<Output = T> +)+ Copy + Clone> $name for T {}
-        }
-    };
-}
-
-make_trait!(ArithmeticOps, Add, Mul, Neg, Sub, Div);
 
 impl<T: ArithmeticOps + GetGrad<T> + Debug> Context<T> {
     pub fn new() -> Self {
@@ -146,18 +131,8 @@ impl<T: ArithmeticOps + GetGrad<T> + Debug> Context<T> {
 
 #[cfg(test)]
 mod test {
-    use crate::variable::GetGrad;
 
     use super::Context;
-
-    impl GetGrad<i32> for i32 {
-        fn get_zero_grad(&self) -> i32 {
-            0
-        }
-        fn get_initial_grad(&self) -> i32 {
-            1
-        }
-    }
 
     #[test]
     fn test_topo_sort() {
@@ -224,7 +199,7 @@ mod test {
     }
 
     #[test]
-    fn test_backward() {
+    fn test_add_backward() {
         let mut c = Context::new();
         let mut x = c.var(1);
         x.requires_grad = true;
@@ -238,5 +213,25 @@ mod test {
         let z = &x.add(&x).add(&x);
         c.backward(&z);
         assert!(c.grad_of(&x) == 3);
+    }
+
+    #[test]
+    fn test_mul_backward() {
+        let mut c = Context::new();
+        let mut x = c.var(2);
+        x.requires_grad = true;
+        let y = c.var(3);
+        let z = &x * &y;
+        c.backward(&z);
+
+        assert!(z.requires_grad);
+        assert!(c.grad_of(&x) == 3);
+
+        // z = x^3
+        // dz/dx = 3 * x^2
+        // x = 2 ==> dz/dx = 3 * 2^2 = 12
+        let z = &x.mul(&x).mul(&x);
+        c.backward(&z);
+        assert!(c.grad_of(&x) == 12);
     }
 }
