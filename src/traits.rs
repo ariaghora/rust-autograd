@@ -35,3 +35,13 @@ impl GetGrad for i32 {
         1
     }
 }
+
+/// Helper when we want to use i32 as the data type
+impl GetGrad for f32 {
+    fn get_zero_grad(&self) -> f32 {
+        0.0
+    }
+    fn get_initial_grad(&self) -> f32 {
+        1.0
+    }
+}

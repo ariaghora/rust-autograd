@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 paste = "1.0.12"
+ndarray = { version = "0.15", optional = true }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
