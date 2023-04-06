@@ -20,7 +20,31 @@ pub trait HasGrad<T> {
     fn get_default_init_grad(&self) -> Self;
 }
 
+pub trait GetSetById<T> {
+    fn get_by_id(&self, id: uuid::Uuid) -> Option<T>;
+    fn set_by_id(&mut self, id: uuid::Uuid, val: T);
+}
+
 type ValueMap<T> = HashMap<uuid::Uuid, Rc<RefCell<Option<T>>>>;
+
+impl<T: Copy> GetSetById<T> for ValueMap<T> {
+    fn get_by_id(&self, id: uuid::Uuid) -> Option<T> {
+        get_value(self.get(&id).unwrap())
+    }
+
+    fn set_by_id(&mut self, id: uuid::Uuid, val: T) {
+        self.insert(id, Rc::new(RefCell::new(Some(val))));
+    }
+}
+
+fn get_value<T: Copy>(x: &Rc<RefCell<Option<T>>>) -> Option<T> {
+    let x_borrowed = x.as_ref().borrow();
+
+    match &*x_borrowed {
+        Some(value) => Some(*value),
+        None => None,
+    }
+}
 
 fn add_backward<'a, T: HasGrad<T> + Add<Output = T> + Copy + Debug>(
     deps: &Vec<Box<Var<T>>>,
@@ -32,23 +56,23 @@ fn add_backward<'a, T: HasGrad<T> + Add<Output = T> + Copy + Debug>(
     let r_dep = deps.get(1).unwrap();
 
     if l_dep.requires_grad {
-        let l_data = get_value(data_map.get(&l_dep.id).unwrap()).unwrap();
+        let l_data = data_map.get_by_id(l_dep.id).unwrap();
         let l_grad = match grad_map.get(&l_dep.id) {
             Some(grad_rc) => get_value(grad_rc).unwrap(),
             None => l_data.get_zero_grad(),
         };
         let new_grad = l_grad + parent_grad;
-        grad_map.insert(l_dep.id, Rc::new(RefCell::new(Some(new_grad))));
+        grad_map.set_by_id(l_dep.id, new_grad);
     }
 
     if r_dep.requires_grad {
-        let r_data = get_value(data_map.get(&r_dep.id).unwrap()).unwrap();
+        let r_data = data_map.get_by_id(r_dep.id).unwrap();
         let r_grad = match grad_map.get(&r_dep.id) {
             Some(grad_rc) => get_value(grad_rc).unwrap(),
             None => r_data.get_zero_grad(),
         };
         let new_grad = r_grad + parent_grad;
-        grad_map.insert(r_dep.id, Rc::new(RefCell::new(Some(new_grad))));
+        grad_map.set_by_id(r_dep.id, new_grad);
     }
 }
 
@@ -62,8 +86,8 @@ fn mul_backward<'a, T: HasGrad<T> + Add<Output = T> + Mul<Output = T> + Copy + D
     let r_dep = deps.get(1).unwrap();
 
     if l_dep.requires_grad {
-        let l_data = get_value(data_map.get(&l_dep.id).unwrap()).unwrap();
-        let r_data = get_value(data_map.get(&r_dep.id).unwrap()).unwrap();
+        let l_data = data_map.get_by_id(l_dep.id).unwrap();
+        let r_data = data_map.get_by_id(r_dep.id).unwrap();
         let l_grad = match grad_map.get(&l_dep.id) {
             Some(grad_rc) => get_value(grad_rc).unwrap(),
             None => l_data.get_zero_grad(),
@@ -73,8 +97,8 @@ fn mul_backward<'a, T: HasGrad<T> + Add<Output = T> + Mul<Output = T> + Copy + D
     }
 
     if r_dep.requires_grad {
-        let r_data = get_value(data_map.get(&r_dep.id).unwrap()).unwrap();
-        let l_data = get_value(data_map.get(&l_dep.id).unwrap()).unwrap();
+        let r_data = data_map.get_by_id(r_dep.id).unwrap();
+        let l_data = data_map.get_by_id(l_dep.id).unwrap();
         let r_grad = match grad_map.get(&r_dep.id) {
             Some(grad_rc) => get_value(grad_rc).unwrap(),
             None => r_data.get_zero_grad(),
@@ -201,14 +225,14 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
                 Some(bw_fn) => {
                     // var requires grad. Proceed.
                     let deps = &var.deps;
-                    let var_val = get_value(data_map.get(&var.id).unwrap()).unwrap();
+                    let var_val = data_map.get_by_id(var.id).unwrap();
 
                     // The grad of root node is set from get_default_init_grad(), which is
                     // usually ones. Otherwise, get the grad from the grad_map by that node's id
                     let grad = if var.id == self.id {
                         var_val.get_default_init_grad()
                     } else {
-                        get_value(grad_map.get(&var.id).unwrap()).unwrap()
+                        grad_map.get_by_id(var.id).unwrap()
                     };
 
                     bw_fn(deps, data_map, grad_map, grad);
@@ -232,19 +256,15 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
                 }
                 VariableType::OpAdd => {
                     // TODO: use function to handle binops
-                    let ldata = data_map.get(&var.deps[0].id).unwrap();
-                    let ldata = get_value(ldata).unwrap();
-                    let rdata = data_map.get(&var.deps[1].id).unwrap();
-                    let rdata = get_value(rdata).unwrap();
+                    let ldata = data_map.get_by_id(var.deps[0].id).unwrap();
+                    let rdata = data_map.get_by_id(var.deps[1].id).unwrap();
                     let data = ldata + rdata;
                     data_map.insert(var.id, Rc::new(RefCell::new(Some(data))));
                 }
                 VariableType::OpMul => {
                     // TODO: use function to handle binops
-                    let ldata = data_map.get(&var.deps[0].id).unwrap();
-                    let ldata = get_value(ldata).unwrap();
-                    let rdata = data_map.get(&var.deps[1].id).unwrap();
-                    let rdata = get_value(rdata).unwrap();
+                    let ldata = data_map.get_by_id(var.deps[0].id).unwrap();
+                    let rdata = data_map.get_by_id(var.deps[1].id).unwrap();
                     let data = ldata * rdata;
                     data_map.insert(var.id, Rc::new(RefCell::new(Some(data))));
                 }
@@ -310,18 +330,6 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
             grad_map: None,
             backward_fn: Some(mul_backward),
         }
-    }
-}
-
-fn get_value<T>(x: &Rc<RefCell<Option<T>>>) -> Option<T>
-where
-    T: Copy,
-{
-    let x_borrowed = x.as_ref().borrow();
-
-    match &*x_borrowed {
-        Some(value) => Some(*value),
-        None => None,
     }
 }
 
