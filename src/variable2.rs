@@ -3,7 +3,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
-    ops::Add,
+    ops::{Add, Mul},
     rc::Rc,
     vec,
 };
@@ -12,6 +12,7 @@ use std::{
 enum VariableType {
     Input,
     OpAdd,
+    OpMul,
 }
 
 pub trait HasGrad<T> {
@@ -51,6 +52,38 @@ fn add_backward<'a, T: HasGrad<T> + Add<Output = T> + Copy + Debug>(
     }
 }
 
+fn mul_backward<'a, T: HasGrad<T> + Add<Output = T> + Mul<Output = T> + Copy + Debug>(
+    deps: &Vec<Box<Var<T>>>,
+    data_map: &mut ValueMap<T>,
+    grad_map: &mut ValueMap<T>,
+    parent_grad: T,
+) {
+    let l_dep = deps.get(0).unwrap();
+    let r_dep = deps.get(1).unwrap();
+
+    if l_dep.requires_grad {
+        let l_data = get_value(data_map.get(&l_dep.id).unwrap()).unwrap();
+        let r_data = get_value(data_map.get(&r_dep.id).unwrap()).unwrap();
+        let l_grad = match grad_map.get(&l_dep.id) {
+            Some(grad_rc) => get_value(grad_rc).unwrap(),
+            None => l_data.get_zero_grad(),
+        };
+        let new_grad = l_grad + parent_grad * r_data;
+        grad_map.insert(l_dep.id, Rc::new(RefCell::new(Some(new_grad))));
+    }
+
+    if r_dep.requires_grad {
+        let r_data = get_value(data_map.get(&r_dep.id).unwrap()).unwrap();
+        let l_data = get_value(data_map.get(&l_dep.id).unwrap()).unwrap();
+        let r_grad = match grad_map.get(&r_dep.id) {
+            Some(grad_rc) => get_value(grad_rc).unwrap(),
+            None => r_data.get_zero_grad(),
+        };
+        let new_grad = r_grad + parent_grad * l_data;
+        grad_map.insert(r_dep.id, Rc::new(RefCell::new(Some(new_grad))));
+    }
+}
+
 #[derive(Clone)]
 pub struct Var<T> {
     id: uuid::Uuid,
@@ -69,7 +102,7 @@ pub struct Var<T> {
     backward_fn: Option<fn(&Vec<Box<Var<T>>>, &mut ValueMap<T>, &mut ValueMap<T>, T)>,
 }
 
-impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Debug> Var<T> {
+impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T> {
     pub fn new(data: T) -> Self {
         Var {
             id: uuid::Uuid::new_v4(),
@@ -161,6 +194,7 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Debug> Var<T> {
             (data_map, grad_map)
         };
 
+        // run backward propagation in iterative manner
         for i in 0..sorted.len() {
             let var = &mut sorted[i];
             match var.backward_fn {
@@ -168,7 +202,15 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Debug> Var<T> {
                     // var requires grad. Proceed.
                     let deps = &var.deps;
                     let var_val = get_value(data_map.get(&var.id).unwrap()).unwrap();
-                    let grad = var_val.get_default_init_grad();
+
+                    // The grad of root node is set from get_default_init_grad(), which is
+                    // usually ones. Otherwise, get the grad from the grad_map by that node's id
+                    let grad = if var.id == self.id {
+                        var_val.get_default_init_grad()
+                    } else {
+                        get_value(grad_map.get(&var.id).unwrap()).unwrap()
+                    };
+
                     bw_fn(deps, data_map, grad_map, grad);
                 }
                 None => (),
@@ -195,6 +237,15 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Debug> Var<T> {
                     let rdata = data_map.get(&var.deps[1].id).unwrap();
                     let rdata = get_value(rdata).unwrap();
                     let data = ldata + rdata;
+                    data_map.insert(var.id, Rc::new(RefCell::new(Some(data))));
+                }
+                VariableType::OpMul => {
+                    // TODO: use function to handle binops
+                    let ldata = data_map.get(&var.deps[0].id).unwrap();
+                    let ldata = get_value(ldata).unwrap();
+                    let rdata = data_map.get(&var.deps[1].id).unwrap();
+                    let rdata = get_value(rdata).unwrap();
+                    let data = ldata * rdata;
                     data_map.insert(var.id, Rc::new(RefCell::new(Some(data))));
                 }
             }
@@ -228,7 +279,7 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Debug> Var<T> {
 }
 
 /// Ops implementations
-impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Debug> Var<T> {
+impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T> {
     pub fn add(&self, other: &Var<T>) -> Var<T> {
         Var {
             id: uuid::Uuid::new_v4(),
@@ -242,6 +293,22 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Debug> Var<T> {
             data_map: None,
             grad_map: None,
             backward_fn: Some(add_backward),
+        }
+    }
+
+    pub fn mul(&self, other: &Var<T>) -> Var<T> {
+        Var {
+            id: uuid::Uuid::new_v4(),
+            data: Rc::new(RefCell::new(None)),
+            deps: vec![Box::new(self.copy(false)), Box::new(other.copy(false))],
+            evaluated: false,
+            grad: Rc::new(None),
+            is_leaf: false,
+            requires_grad: self.requires_grad || other.requires_grad,
+            var_type: VariableType::OpMul,
+            data_map: None,
+            grad_map: None,
+            backward_fn: Some(mul_backward),
         }
     }
 }
@@ -268,30 +335,52 @@ impl HasGrad<f32> for f32 {
     }
 }
 
-#[test]
-fn test_variable2_eval() {
-    let x = Var::new(1.0);
-    let mut z = x.add(&x).add(&x);
-    let mut a = z.add(&z);
+#[cfg(test)]
+mod test_var_api_v2 {
+    use crate::variable2::Var;
 
-    assert!(z.val() == 3.0);
-    assert!(z.val() == 3.0); // call for second time
-    assert!(a.val() == 6.0);
-}
+    #[test]
+    fn test_eval() {
+        let x = Var::new(1.0);
+        let mut z = x.add(&x).add(&x);
+        let mut a = z.add(&z);
 
-#[test]
-fn test_add_backward() {
-    let mut x = Var::new(2.0);
-    x.requires_grad(true);
-    let y = Var::new(3.0);
-    let mut z = x.add(&y);
+        assert!(z.val() == 3.0);
+        assert!(z.val() == 3.0); // call for second time
+        assert!(a.val() == 6.0);
+    }
 
-    z.backward();
+    #[test]
+    fn test_add_backward() {
+        let mut x = Var::new(2.0);
+        x.requires_grad(true);
+        let y = Var::new(3.0);
+        let mut z = x.add(&y);
 
-    assert!(z.requires_grad); // when x requires grad, z must also require grad
-    assert!(z.grad_wrt(&x) == 1.0);
+        z.backward();
 
-    let mut z = x.add(&x); // z = 2x, so dz/dx=2
-    z.backward();
-    assert!(z.grad_wrt(&x) == 2.0);
+        assert!(z.requires_grad); // when x requires grad, z must also require grad
+        assert!(z.grad_wrt(&x) == 1.0);
+
+        let mut z = x.add(&x); // z = 2x, so dz/dx=2
+        z.backward();
+        assert!(z.grad_wrt(&x) == 2.0);
+    }
+
+    #[test]
+    fn test_mul_backward() {
+        let mut x = Var::new(2.0);
+        x.requires_grad(true);
+        let y = Var::new(3.0);
+
+        // z = x * y
+        let mut z = x.mul(&y);
+        z.backward();
+        assert!(z.grad_wrt(&x) == 3.0); // dz/dx == 3?
+
+        // z = x^3 + y
+        z = (x.mul(&x).mul(&x)).add(&y);
+        z.backward();
+        assert!(z.grad_wrt(&x) == 12.0); // dz/dx == 12?
+    }
 }
