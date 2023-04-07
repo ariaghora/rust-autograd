@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     fmt::Debug,
     ops::{Add, Mul},
     rc::Rc,
@@ -180,7 +180,7 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
         &self,
         variable: &Var<T>,
         visited: &mut HashSet<uuid::Uuid>,
-        stack: &mut VecDeque<Var<T>>,
+        stack: &mut Vec<Var<T>>,
         allow_revisit: bool,
     ) {
         if !allow_revisit {
@@ -195,12 +195,12 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
             self.dfs(dep, visited, stack, allow_revisit);
         }
 
-        stack.push_back(variable.copy(false));
+        stack.push(variable.copy(false));
     }
 
     fn topological_sort(&self, entry: &Var<T>, allow_revisit: bool) -> Vec<Var<T>> {
         let mut visited = HashSet::new();
-        let mut stack = VecDeque::new();
+        let mut stack = Vec::new();
 
         self.dfs(entry, &mut visited, &mut stack, allow_revisit);
 
