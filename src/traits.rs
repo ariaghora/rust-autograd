@@ -1,47 +1,27 @@
-use paste::paste;
 use std::ops::{Add, Div, Mul, Neg, Sub};
+
+use paste::paste;
 
 macro_rules! make_arithmetic_ops_trait {
     ($name:ident, $($trait:path),+ $(,)?) => {
         paste! {
             // Create the custom trait that combines the required traits
-            pub trait $name: $($trait<Output = Self> +)+ Copy + Clone {}
+            pub trait $name: $($trait<Output = Self> +)+ Copy  {}
 
             // Implement the custom trait for all types that satisfy the trait bounds
-            impl<T: $($trait<Output = T> +)+ Copy + Clone> $name for T {}
+            impl<T: $($trait<Output = T> +)+ Copy> $name for T {}
         }
     };
 }
 
 make_arithmetic_ops_trait!(ArithmeticOps, Add, Mul, Neg, Sub, Div);
 
-pub trait GetGrad {
-    /// Get zero gradient value according to the value.
-    /// For scalar, normally it returns zero. For ndarray, it will return
-    /// ndarray of zeros with the same shape as the data itself.
+pub trait HasGrad<T> {
     fn get_zero_grad(&self) -> Self;
-
-    /// Get initial downstream gradient when the node acts as root node.
-    /// Usually one or array of ones.
-    fn get_initial_grad(&self) -> Self;
+    fn get_default_init_grad(&self) -> Self;
 }
 
-/// Helper when we want to use i32 as the data type
-impl GetGrad for i32 {
-    fn get_zero_grad(&self) -> i32 {
-        0
-    }
-    fn get_initial_grad(&self) -> i32 {
-        1
-    }
-}
-
-/// Helper when we want to use i32 as the data type
-impl GetGrad for f32 {
-    fn get_zero_grad(&self) -> f32 {
-        0.0
-    }
-    fn get_initial_grad(&self) -> f32 {
-        1.0
-    }
+pub trait GetSetById<T> {
+    fn get_by_id(&self, id: uuid::Uuid) -> Option<T>;
+    fn set_by_id(&mut self, id: uuid::Uuid, val: T);
 }

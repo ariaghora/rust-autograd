@@ -1,45 +1,49 @@
 #[cfg(test)]
-mod test {
+mod test_var_api_v2 {
+    use rust_autograd::variable::Var;
 
-    use rust_autograd::context::Context;
+    #[test]
+    fn test_eval() {
+        let x = Var::new(1.0);
+        let mut z = x.add(&x).add(&x);
+        let mut a = z.add(&z);
+
+        assert!(z.val() == Some(3.0));
+        assert!(z.val() == Some(3.0)); // call for second time
+        assert!(a.val() == Some(6.0));
+    }
 
     #[test]
     fn test_add_backward() {
-        let mut c = Context::new();
-        let mut x = c.var(1);
-        x.requires_grad = true;
-        let y = c.var(2);
-        let z = &x + &y;
-        c.backward(&z);
+        let mut x = Var::new(2.0);
+        x.set_requires_grad(true);
+        let y = Var::new(3.0);
+        let mut z = x.add(&y);
 
-        assert!(z.requires_grad);
-        assert!(c.grad_of(&x) == 1);
+        z.backward();
 
-        let z = &x.add(&x).add(&x);
-        c.backward(&z);
-        assert!(c.grad_of(&x) == 3);
+        assert!(z.requires_grad()); // when x requires grad, z must also require grad
+        assert!(z.grad_wrt(&x) == Some(1.0));
+
+        let mut z = x.add(&x); // z = 2x, so dz/dx=2
+        z.backward();
+        assert!(z.grad_wrt(&x) == Some(2.0));
     }
 
     #[test]
     fn test_mul_backward() {
-        let mut c = Context::new();
-        let mut x = c.var(2);
-        x.requires_grad = true;
-        let y = c.var(3);
-        let z = &x * &y;
-        c.backward(&z);
+        let mut x = Var::new(2.0);
+        x.set_requires_grad(true);
+        let y = Var::new(3.0);
 
-        assert!(z.requires_grad);
-        assert!(c.grad_of(&x) == 3);
+        // z = x * y
+        let mut z = x.mul(&y);
+        z.backward();
+        assert!(z.grad_wrt(&x) == Some(3.0)); // dz/dx == 3?
 
-        //     z = x^3
-        // dz/dx = 3 * x^2
-        //
-        // when x = 2:
-        // dz/dx = 3 * 2^2
-        //       = 12
-        let z = &x.mul(&x).mul(&x);
-        c.backward(&z);
-        assert!(c.grad_of(&x) == 12);
+        // z = x^3 + y
+        z = (x.mul(&x).mul(&x)).add(&y);
+        z.backward();
+        assert!(z.grad_wrt(&x) == Some(12.0)); // dz/dx == 12?
     }
 }
