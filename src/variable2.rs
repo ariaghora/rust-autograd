@@ -1,11 +1,10 @@
+use paste::paste;
 use std::cell::RefCell;
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    ops::{Add, Mul},
-    rc::Rc,
-    vec,
-};
+use std::collections::{HashMap, HashSet};
+use std::fmt::Debug;
+use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::rc::Rc;
+use std::vec;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum VariableType {
@@ -13,6 +12,24 @@ enum VariableType {
     OpAdd,
     OpMul,
 }
+
+type BackwardFn<T> = fn(&Deps<T>, &mut ValueMap<T>, &mut ValueMap<T>, T);
+type Deps<T> = Vec<Box<Var<T>>>;
+type ValueMap<T> = HashMap<uuid::Uuid, Rc<RefCell<Option<T>>>>;
+
+macro_rules! make_arithmetic_ops_trait {
+    ($name:ident, $($trait:path),+ $(,)?) => {
+        paste! {
+            // Create the custom trait that combines the required traits
+            pub trait $name: $($trait<Output = Self> +)+ Copy  {}
+
+            // Implement the custom trait for all types that satisfy the trait bounds
+            impl<T: $($trait<Output = T> +)+ Copy> $name for T {}
+        }
+    };
+}
+
+make_arithmetic_ops_trait!(ArithmeticOps, Add, Mul, Neg, Sub, Div);
 
 pub trait HasGrad<T> {
     fn get_zero_grad(&self) -> Self;
@@ -24,9 +41,7 @@ pub trait GetSetById<T> {
     fn set_by_id(&mut self, id: uuid::Uuid, val: T);
 }
 
-type ValueMap<T> = HashMap<uuid::Uuid, Rc<RefCell<Option<T>>>>;
-
-impl<T: Copy + HasGrad<T>> GetSetById<T> for ValueMap<T> {
+impl<T: Copy> GetSetById<T> for ValueMap<T> {
     fn get_by_id(&self, id: uuid::Uuid) -> Option<T> {
         match self.get(&id) {
             Some(v) => get_value(v),
@@ -41,21 +56,20 @@ impl<T: Copy + HasGrad<T>> GetSetById<T> for ValueMap<T> {
 
 fn get_value<T: Copy>(x: &Rc<RefCell<Option<T>>>) -> Option<T> {
     let x_borrowed = x.as_ref().borrow();
-
     match &*x_borrowed {
         Some(value) => Some(*value),
         None => None,
     }
 }
 
-fn add_backward<'a, T: HasGrad<T> + Add<Output = T> + Copy + Debug>(
+fn add_backward<'a, T: HasGrad<T> + ArithmeticOps + Debug>(
     deps: &Vec<Box<Var<T>>>,
     data_map: &mut ValueMap<T>,
     grad_map: &mut ValueMap<T>,
     parent_grad: T,
 ) {
-    let l_dep = deps.get(0).unwrap();
-    let r_dep = deps.get(1).unwrap();
+    let l_dep = &deps[0];
+    let r_dep = &deps[1];
 
     if l_dep.requires_grad {
         let l_data = data_map.get_by_id(l_dep.id).unwrap();
@@ -78,14 +92,14 @@ fn add_backward<'a, T: HasGrad<T> + Add<Output = T> + Copy + Debug>(
     }
 }
 
-fn mul_backward<'a, T: HasGrad<T> + Add<Output = T> + Mul<Output = T> + Copy + Debug>(
-    deps: &Vec<Box<Var<T>>>,
+fn mul_backward<'a, T: HasGrad<T> + ArithmeticOps + Debug>(
+    deps: &Deps<T>,
     data_map: &mut ValueMap<T>,
     grad_map: &mut ValueMap<T>,
     parent_grad: T,
 ) {
-    let l_dep = deps.get(0).unwrap();
-    let r_dep = deps.get(1).unwrap();
+    let l_dep = &deps[0];
+    let r_dep = &deps[1];
 
     if l_dep.requires_grad {
         let l_data = data_map.get_by_id(l_dep.id).unwrap();
@@ -115,10 +129,10 @@ fn mul_backward<'a, T: HasGrad<T> + Add<Output = T> + Mul<Output = T> + Copy + D
 #[derive(Clone)]
 pub struct Var<T> {
     id: uuid::Uuid,
+
     data: Rc<RefCell<Option<T>>>, // T is None for non-leaf nodes
-    deps: Vec<Box<Var<T>>>,
+    deps: Deps<T>,
     evaluated: bool,
-    grad: Rc<Option<RefCell<T>>>,
     is_leaf: bool,
     requires_grad: bool,
     var_type: VariableType,
@@ -127,7 +141,7 @@ pub struct Var<T> {
     data_map: Option<ValueMap<T>>,
     grad_map: Option<ValueMap<T>>,
 
-    backward_fn: Option<fn(&Vec<Box<Var<T>>>, &mut ValueMap<T>, &mut ValueMap<T>, T)>,
+    backward_fn: Option<BackwardFn<T>>,
 }
 
 impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T> {
@@ -137,7 +151,6 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
             data: Rc::new(RefCell::new(Some(data))),
             deps: vec![],
             evaluated: false,
-            grad: Rc::new(None),
             is_leaf: true,
             requires_grad: false,
             var_type: VariableType::Input,
@@ -158,11 +171,6 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
             },
             deps: self.deps.clone(),
             evaluated: self.evaluated,
-            grad: if deep {
-                self.grad.clone()
-            } else {
-                Rc::clone(&self.grad)
-            },
             is_leaf: self.is_leaf,
             requires_grad: self.requires_grad,
             var_type: self.var_type,
@@ -183,27 +191,19 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
         stack: &mut Vec<Var<T>>,
         allow_revisit: bool,
     ) {
-        if !allow_revisit {
-            if visited.contains(&variable.id) {
-                return;
+        if allow_revisit || !visited.contains(&variable.id) {
+            visited.insert(variable.id);
+            for dep in &variable.deps {
+                self.dfs(dep, visited, stack, allow_revisit);
             }
+            stack.push(variable.copy(false));
         }
-
-        visited.insert(variable.id);
-
-        for dep in &variable.deps {
-            self.dfs(dep, visited, stack, allow_revisit);
-        }
-
-        stack.push(variable.copy(false));
     }
 
     fn topological_sort(&self, entry: &Var<T>, allow_revisit: bool) -> Vec<Var<T>> {
         let mut visited = HashSet::new();
         let mut stack = Vec::new();
-
         self.dfs(entry, &mut visited, &mut stack, allow_revisit);
-
         stack.into_iter().collect()
     }
 
@@ -246,11 +246,17 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
         }
     }
 
-    pub fn eval(&mut self) {
-        self.data_map = Some(HashMap::new());
+    pub fn eval_bin_op(parent: &Var<T>, data_map: &mut ValueMap<T>, op: fn(T, T) -> T) {
+        let ldata = data_map.get_by_id(parent.deps[0].id).unwrap();
+        let rdata = data_map.get_by_id(parent.deps[1].id).unwrap();
+        let data = op(ldata, rdata);
+        data_map.set_by_id(parent.id, data);
+    }
 
+    pub fn eval(&mut self) {
         let sorted = self.topological_sort(self, false);
 
+        self.data_map = Some(HashMap::new());
         let data_map = &mut self.data_map.as_mut().unwrap();
 
         for var in sorted {
@@ -258,20 +264,8 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
                 VariableType::Input => {
                     data_map.insert(var.id, Rc::clone(&var.data));
                 }
-                VariableType::OpAdd => {
-                    // TODO: use function to handle binops
-                    let ldata = data_map.get_by_id(var.deps[0].id).unwrap();
-                    let rdata = data_map.get_by_id(var.deps[1].id).unwrap();
-                    let data = ldata + rdata;
-                    data_map.insert(var.id, Rc::new(RefCell::new(Some(data))));
-                }
-                VariableType::OpMul => {
-                    // TODO: use function to handle binops
-                    let ldata = data_map.get_by_id(var.deps[0].id).unwrap();
-                    let rdata = data_map.get_by_id(var.deps[1].id).unwrap();
-                    let data = ldata * rdata;
-                    data_map.insert(var.id, Rc::new(RefCell::new(Some(data))));
-                }
+                VariableType::OpAdd => Self::eval_bin_op(&var, data_map, |a, b| a + b),
+                VariableType::OpMul => Self::eval_bin_op(&var, data_map, |a, b| a * b),
             }
         }
 
@@ -301,37 +295,28 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
 }
 
 /// Ops implementations
-impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T> {
-    pub fn add(&self, other: &Var<T>) -> Var<T> {
+impl<'a, T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {
+    fn bin_op(&self, other: &Var<T>, var_type: VariableType, backward_fn: BackwardFn<T>) -> Var<T> {
         Var {
             id: uuid::Uuid::new_v4(),
             data: Rc::new(RefCell::new(None)),
             deps: vec![Box::new(self.copy(false)), Box::new(other.copy(false))],
             evaluated: false,
-            grad: Rc::new(None),
             is_leaf: false,
             requires_grad: self.requires_grad || other.requires_grad,
-            var_type: VariableType::OpAdd,
+            var_type: var_type,
             data_map: None,
             grad_map: None,
-            backward_fn: Some(add_backward),
+            backward_fn: Some(backward_fn),
         }
     }
 
+    pub fn add(&self, other: &Var<T>) -> Var<T> {
+        self.bin_op(other, VariableType::OpAdd, add_backward)
+    }
+
     pub fn mul(&self, other: &Var<T>) -> Var<T> {
-        Var {
-            id: uuid::Uuid::new_v4(),
-            data: Rc::new(RefCell::new(None)),
-            deps: vec![Box::new(self.copy(false)), Box::new(other.copy(false))],
-            evaluated: false,
-            grad: Rc::new(None),
-            is_leaf: false,
-            requires_grad: self.requires_grad || other.requires_grad,
-            var_type: VariableType::OpMul,
-            data_map: None,
-            grad_map: None,
-            backward_fn: Some(mul_backward),
-        }
+        self.bin_op(other, VariableType::OpMul, mul_backward)
     }
 }
 
