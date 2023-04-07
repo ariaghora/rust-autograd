@@ -1,6 +1,5 @@
+use std::cell::RefCell;
 use std::{
-    borrow::Borrow,
-    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     ops::{Add, Mul},
@@ -27,9 +26,12 @@ pub trait GetSetById<T> {
 
 type ValueMap<T> = HashMap<uuid::Uuid, Rc<RefCell<Option<T>>>>;
 
-impl<T: Copy> GetSetById<T> for ValueMap<T> {
+impl<T: Copy + HasGrad<T>> GetSetById<T> for ValueMap<T> {
     fn get_by_id(&self, id: uuid::Uuid) -> Option<T> {
-        get_value(self.get(&id).unwrap())
+        match self.get(&id) {
+            Some(v) => get_value(v),
+            None => None,
+        }
     }
 
     fn set_by_id(&mut self, id: uuid::Uuid, val: T) {
@@ -57,8 +59,8 @@ fn add_backward<'a, T: HasGrad<T> + Add<Output = T> + Copy + Debug>(
 
     if l_dep.requires_grad {
         let l_data = data_map.get_by_id(l_dep.id).unwrap();
-        let l_grad = match grad_map.get(&l_dep.id) {
-            Some(grad_rc) => get_value(grad_rc).unwrap(),
+        let l_grad = match grad_map.get_by_id(l_dep.id) {
+            Some(grad) => grad,
             None => l_data.get_zero_grad(),
         };
         let new_grad = l_grad + parent_grad;
@@ -67,8 +69,8 @@ fn add_backward<'a, T: HasGrad<T> + Add<Output = T> + Copy + Debug>(
 
     if r_dep.requires_grad {
         let r_data = data_map.get_by_id(r_dep.id).unwrap();
-        let r_grad = match grad_map.get(&r_dep.id) {
-            Some(grad_rc) => get_value(grad_rc).unwrap(),
+        let r_grad = match grad_map.get_by_id(r_dep.id) {
+            Some(grad) => grad,
             None => r_data.get_zero_grad(),
         };
         let new_grad = r_grad + parent_grad;
@@ -88,23 +90,25 @@ fn mul_backward<'a, T: HasGrad<T> + Add<Output = T> + Mul<Output = T> + Copy + D
     if l_dep.requires_grad {
         let l_data = data_map.get_by_id(l_dep.id).unwrap();
         let r_data = data_map.get_by_id(r_dep.id).unwrap();
-        let l_grad = match grad_map.get(&l_dep.id) {
-            Some(grad_rc) => get_value(grad_rc).unwrap(),
+
+        let l_grad = match grad_map.get_by_id(l_dep.id) {
+            Some(grad_rc) => grad_rc,
             None => l_data.get_zero_grad(),
         };
         let new_grad = l_grad + parent_grad * r_data;
-        grad_map.insert(l_dep.id, Rc::new(RefCell::new(Some(new_grad))));
+        grad_map.set_by_id(l_dep.id, new_grad);
     }
 
     if r_dep.requires_grad {
         let r_data = data_map.get_by_id(r_dep.id).unwrap();
         let l_data = data_map.get_by_id(l_dep.id).unwrap();
-        let r_grad = match grad_map.get(&r_dep.id) {
-            Some(grad_rc) => get_value(grad_rc).unwrap(),
+
+        let r_grad = match grad_map.get_by_id(r_dep.id) {
+            Some(grad_rc) => grad_rc,
             None => r_data.get_zero_grad(),
         };
         let new_grad = r_grad + parent_grad * l_data;
-        grad_map.insert(r_dep.id, Rc::new(RefCell::new(Some(new_grad))));
+        grad_map.set_by_id(r_dep.id, new_grad);
     }
 }
 
@@ -274,27 +278,25 @@ impl<'a, T: HasGrad<T> + Copy + Add<Output = T> + Mul<Output = T> + Debug> Var<T
         self.evaluated = true;
     }
 
-    fn get_from_data_map(&self, id: uuid::Uuid) -> T {
-        let hm = self.data_map.as_ref().unwrap();
-        let rc = hm.get(&id).borrow().unwrap();
-        get_value(&rc).unwrap()
-    }
-
     pub fn requires_grad(&mut self, val: bool) {
         self.requires_grad = val;
     }
 
-    pub fn grad_wrt(&self, var: &Var<T>) -> T {
-        let grad_map = self.grad_map.as_ref().unwrap();
-        let grad = grad_map.get(&var.id).unwrap();
-        get_value(grad).unwrap()
+    pub fn grad_wrt(&self, var: &Var<T>) -> Option<T> {
+        match self.grad_map.as_ref() {
+            Some(map) => map.get_by_id(var.id),
+            None => None,
+        }
     }
 
-    pub fn val(&mut self) -> T {
+    pub fn val(&mut self) -> Option<T> {
         if !self.evaluated {
             self.eval();
         }
-        return self.get_from_data_map(self.id);
+        match self.data_map.as_ref() {
+            Some(map) => map.get_by_id(self.id),
+            None => None,
+        }
     }
 }
 
@@ -353,9 +355,9 @@ mod test_var_api_v2 {
         let mut z = x.add(&x).add(&x);
         let mut a = z.add(&z);
 
-        assert!(z.val() == 3.0);
-        assert!(z.val() == 3.0); // call for second time
-        assert!(a.val() == 6.0);
+        assert!(z.val() == Some(3.0));
+        assert!(z.val() == Some(3.0)); // call for second time
+        assert!(a.val() == Some(6.0));
     }
 
     #[test]
@@ -368,11 +370,11 @@ mod test_var_api_v2 {
         z.backward();
 
         assert!(z.requires_grad); // when x requires grad, z must also require grad
-        assert!(z.grad_wrt(&x) == 1.0);
+        assert!(z.grad_wrt(&x) == Some(1.0));
 
         let mut z = x.add(&x); // z = 2x, so dz/dx=2
         z.backward();
-        assert!(z.grad_wrt(&x) == 2.0);
+        assert!(z.grad_wrt(&x) == Some(2.0));
     }
 
     #[test]
@@ -384,11 +386,11 @@ mod test_var_api_v2 {
         // z = x * y
         let mut z = x.mul(&y);
         z.backward();
-        assert!(z.grad_wrt(&x) == 3.0); // dz/dx == 3?
+        assert!(z.grad_wrt(&x) == Some(3.0)); // dz/dx == 3?
 
         // z = x^3 + y
         z = (x.mul(&x).mul(&x)).add(&y);
         z.backward();
-        assert!(z.grad_wrt(&x) == 12.0); // dz/dx == 12?
+        assert!(z.grad_wrt(&x) == Some(12.0)); // dz/dx == 12?
     }
 }
