@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod test_var_api_v2 {
+
     use rust_autograd::variable::Var;
 
     #[test]
@@ -8,9 +9,11 @@ mod test_var_api_v2 {
         let mut z = x.add(&x).add(&x);
         let mut a = z.add(&z);
 
-        assert!(z.val() == Some(3.0));
-        assert!(z.val() == Some(3.0)); // call for second time
-        assert!(a.val() == Some(6.0));
+        z.eval();
+        a.eval();
+
+        assert!(z.data().unwrap() == 3.0);
+        assert!(a.data().unwrap() == 6.0);
     }
 
     #[test]
@@ -21,13 +24,14 @@ mod test_var_api_v2 {
         let mut z = x.add(&y);
 
         z.backward();
-
         assert!(z.requires_grad()); // when x requires grad, z must also require grad
-        assert!(z.grad_wrt(&x) == Some(1.0));
+        assert!(x.grad().unwrap() == 1.0);
 
-        let mut z = x.add(&x); // z = 2x, so dz/dx=2
+        z.reset_grad();
+
+        z = x.add(&x); // z = 2x, so dz/dx=2
         z.backward();
-        assert!(z.grad_wrt(&x) == Some(2.0));
+        assert!(x.grad().unwrap() == 2.0);
     }
 
     #[test]
@@ -39,11 +43,13 @@ mod test_var_api_v2 {
         // z = x * y
         let mut z = x.mul(&y);
         z.backward();
-        assert!(z.grad_wrt(&x) == Some(3.0)); // dz/dx == 3?
+        assert!(x.grad().unwrap() == 3.0); // dz/dx == 3?
+
+        z.reset_grad();
 
         // z = x^3 + y
         z = (x.mul(&x).mul(&x)).add(&y);
         z.backward();
-        assert!(z.grad_wrt(&x) == Some(12.0)); // dz/dx == 12?
+        assert!(x.grad().unwrap() == 12.0); // dz/dx == 12?
     }
 }
