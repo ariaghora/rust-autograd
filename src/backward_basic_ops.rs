@@ -1,13 +1,11 @@
 use std::fmt::Debug;
 
-use crate::{
-    traits::{ArithmeticOps, HasGrad},
-    variable::Var,
-};
+use crate::traits::{ArithmeticOps, HasGrad};
+use crate::variable::Var;
 
-pub fn add_backward<T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, parent_grad: T) {
-    let l_dep = &parent.deps()[0];
-    let r_dep = &parent.deps()[1];
+pub fn add_backward<'a, T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, parent_grad: T) {
+    let l_dep = &parent.deps[0];
+    let r_dep = &parent.deps[1];
 
     if l_dep.requires_grad {
         let l_data = l_dep.data().unwrap();
@@ -24,7 +22,7 @@ pub fn add_backward<T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, pare
     }
 }
 
-pub fn sub_backward<T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, parent_grad: T) {
+pub fn sub_backward<'a, T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, parent_grad: T) {
     let l_dep = &parent.deps()[0];
     let r_dep = &parent.deps()[1];
 
@@ -43,7 +41,7 @@ pub fn sub_backward<T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, pare
     }
 }
 
-pub fn mul_backward<T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, parent_grad: T) {
+pub fn mul_backward<'a, T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, parent_grad: T) {
     let l_dep = &parent.deps[0];
     let r_dep = &parent.deps[1];
 

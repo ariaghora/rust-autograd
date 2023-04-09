@@ -3,9 +3,13 @@ use std::collections::HashSet;
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
 use std::vec;
+use traits_ndarray::NDArray;
+
+use ndarray::{Array, CowArray, Dimension};
 
 use crate::backward_basic_ops::{add_backward, mul_backward, sub_backward};
 use crate::traits::{ArithmeticOps, HasGrad};
+use crate::traits_ndarray;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum VariableType {
@@ -21,12 +25,12 @@ type Deps<T> = Vec<Box<Var<T>>>;
 pub struct Var<T> {
     pub(crate) deps: Deps<T>,
     pub(crate) requires_grad: bool,
-    id: uuid::Uuid,
-    backward_fn: Option<BackwardFn<T>>,
-    data: Rc<RefCell<Option<T>>>,
-    grad: Rc<RefCell<Option<T>>>,
-    evaluated: bool,
-    is_leaf: bool,
+    pub(crate) id: uuid::Uuid,
+    pub(crate) backward_fn: Option<BackwardFn<T>>,
+    pub(crate) data: Rc<RefCell<Option<T>>>,
+    pub(crate) grad: Rc<RefCell<Option<T>>>,
+    pub(crate) evaluated: bool,
+    pub(crate) is_leaf: bool,
     var_type: VariableType,
 }
 
@@ -47,7 +51,12 @@ impl<T: Display + Clone> Debug for Var<T> {
     }
 }
 
-impl<T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
+pub fn from_ndarray<'a, D: Dimension>(data: Array<f64, D>) -> Var<NDArray<'a>> {
+    let data = NDArray(CowArray::from(data.into_dyn()));
+    Var::new(data)
+}
+
+impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
     pub fn new(data: T) -> Self {
         Var {
             id: uuid::Uuid::new_v4(),
@@ -209,7 +218,7 @@ impl<T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
 }
 
 /// Basic arithmetic ops implementations
-impl<T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {
+impl<'a, T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {
     pub fn add(&self, other: &Var<T>) -> Var<T> {
         self.handle_bin_op(other, VariableType::OpAdd, add_backward)
     }
