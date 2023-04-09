@@ -5,13 +5,14 @@ use std::fmt::Debug;
 use std::rc::Rc;
 use std::vec;
 
-use crate::backward_basic_ops::{add_backward, mul_backward};
+use crate::backward_basic_ops::{add_backward, mul_backward, sub_backward};
 use crate::traits::{ArithmeticOps, HasGrad};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum VariableType {
     Input,
     OpAdd,
+    OpSub,
     OpMul,
 }
 
@@ -30,7 +31,7 @@ pub struct Var<T> {
     var_type: VariableType,
 }
 
-impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
+impl<T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
     pub fn new(data: T) -> Self {
         Var {
             id: uuid::Uuid::new_v4(),
@@ -120,6 +121,25 @@ impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
         parent.set_data(data);
     }
 
+    fn handle_bin_op(
+        &self,
+        other: &Var<T>,
+        var_type: VariableType,
+        backward_fn: BackwardFn<T>,
+    ) -> Var<T> {
+        Var {
+            id: uuid::Uuid::new_v4(),
+            data: Rc::new(RefCell::new(None)),
+            deps: vec![Box::new(self.copy()), Box::new(other.copy())],
+            evaluated: false,
+            grad: Rc::new(RefCell::new(None)),
+            is_leaf: false,
+            requires_grad: self.requires_grad || other.requires_grad,
+            var_type: var_type,
+            backward_fn: Some(backward_fn),
+        }
+    }
+
     /// Evaluate computation graph and populate the data of intermediary variables
     pub fn eval(&mut self) {
         let sorted = Self::topological_sort(self, false);
@@ -128,6 +148,7 @@ impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
             match var.var_type {
                 VariableType::Input => (),
                 VariableType::OpAdd => Self::eval_bin_op(&var, |a, b| a + b),
+                VariableType::OpSub => Self::eval_bin_op(&var, |a, b| a - b),
                 VariableType::OpMul => Self::eval_bin_op(&var, |a, b| a * b),
             }
         }
@@ -158,14 +179,6 @@ impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
         *self.grad.as_ref().borrow()
     }
 
-    /// Returns node's grad if not None, otherwise returns the alternative
-    pub fn grad_or(&self, alternative: T) -> T {
-        match *self.grad.borrow() {
-            Some(grad) => grad,
-            None => alternative,
-        }
-    }
-
     pub fn set_grad(&self, grad: T) {
         *self.grad.borrow_mut() = Some(grad);
     }
@@ -179,37 +192,20 @@ impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
     }
 }
 
-/// Ops implementations
-impl<'a, T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {
-    fn bin_op(&self, other: &Var<T>, var_type: VariableType, backward_fn: BackwardFn<T>) -> Var<T> {
-        Var {
-            id: uuid::Uuid::new_v4(),
-            data: Rc::new(RefCell::new(None)),
-            deps: vec![Box::new(self.copy()), Box::new(other.copy())],
-            evaluated: false,
-            grad: Rc::new(RefCell::new(None)),
-            is_leaf: false,
-            requires_grad: self.requires_grad || other.requires_grad,
-            var_type: var_type,
-            backward_fn: Some(backward_fn),
-        }
+/// Basic arithmetic ops implementations
+impl<T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {
+    pub fn add(&self, other: &Var<T>) -> Var<T> {
+        self.handle_bin_op(other, VariableType::OpAdd, add_backward)
     }
 
-    pub fn add(&self, other: &Var<T>) -> Var<T> {
-        self.bin_op(other, VariableType::OpAdd, add_backward)
+    pub fn sub(&self, other: &Var<T>) -> Var<T> {
+        self.handle_bin_op(other, VariableType::OpSub, sub_backward)
     }
 
     pub fn mul(&self, other: &Var<T>) -> Var<T> {
-        self.bin_op(other, VariableType::OpMul, mul_backward)
+        self.handle_bin_op(other, VariableType::OpMul, mul_backward)
     }
 }
 
-impl HasGrad<f32> for f32 {
-    fn get_zero_grad(&self) -> Self {
-        0.0
-    }
-
-    fn get_default_init_grad(&self) -> Self {
-        1.0
-    }
-}
+/// Reduce arithmetic implementations
+impl<T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {}

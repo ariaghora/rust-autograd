@@ -25,3 +25,13 @@ pub trait GetSetById<T> {
     fn get_by_id(&self, id: uuid::Uuid) -> Option<T>;
     fn set_by_id(&mut self, id: uuid::Uuid, val: T);
 }
+
+impl HasGrad<f32> for f32 {
+    fn get_zero_grad(&self) -> Self {
+        0.0
+    }
+
+    fn get_default_init_grad(&self) -> Self {
+        1.0
+    }
+}
