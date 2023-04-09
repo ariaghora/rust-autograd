@@ -26,6 +26,11 @@ pub trait GetSetById<T> {
     fn set_by_id(&mut self, id: uuid::Uuid, val: T);
 }
 
+pub trait Reduce<T> {
+    fn sum(&self) -> Self;
+    fn sum_axis(&self, axis: usize) -> Self;
+}
+
 impl HasGrad<f32> for f32 {
     fn get_zero_grad(&self) -> Self {
         0.0

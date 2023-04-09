@@ -1,8 +1,8 @@
-use ndarray::{Array, CowArray, Dim, IxDynImpl};
+use ndarray::{arr0, Array, Axis, CowArray, Dim, IxDynImpl};
 use std::fmt::{Debug, Display};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
-use crate::traits::HasGrad;
+use crate::traits::{HasGrad, Reduce};
 
 #[derive(Clone, Debug)]
 pub struct NDArray<'a>(pub CowArray<'a, f64, Dim<IxDynImpl>>);
@@ -56,6 +56,18 @@ impl<'a> Neg for NDArray<'a> {
 
     fn neg(self) -> Self::Output {
         Self(CowArray::from(self.0.neg()))
+    }
+}
+
+impl<'a, T> Reduce<T> for NDArray<'a> {
+    fn sum(&self) -> Self {
+        let sum = arr0(self.0.sum());
+        Self(CowArray::from(sum).into_dyn())
+    }
+
+    fn sum_axis(&self, axis: usize) -> Self {
+        let sum = self.0.sum_axis(Axis(axis));
+        Self(CowArray::from(sum).into_dyn())
     }
 }
 
