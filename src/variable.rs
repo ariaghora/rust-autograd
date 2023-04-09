@@ -1,7 +1,6 @@
-// use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::rc::Rc;
 use std::vec;
 
@@ -29,6 +28,23 @@ pub struct Var<T> {
     evaluated: bool,
     is_leaf: bool,
     var_type: VariableType,
+}
+
+impl<T: Display + Clone> Debug for Var<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.data.borrow().clone() {
+            Some(_) => {
+                write!(
+                    f,
+                    "Variable containing:\n{}",
+                    self.data.borrow().clone().unwrap()
+                )
+            }
+            None => {
+                write!(f, "Variable contains no data, possible because it is an intermediary variable. Invoke .eval() first.",)
+            }
+        }
+    }
 }
 
 impl<T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
@@ -97,14 +113,14 @@ impl<T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
             match var.backward_fn {
                 Some(bw_fn) => {
                     // var requires grad. Proceed.
-                    let var_val = var.data.borrow().unwrap();
+                    let var_val = var.data.borrow().clone().unwrap();
 
                     // The grad of root node is set from get_default_init_grad(), which is
                     // usually ones. Otherwise, get the grad from the grad_map by that node's id
                     let grad = if var.id == self.id {
                         var_val.get_default_init_grad()
                     } else {
-                        var.grad.borrow().unwrap()
+                        var.grad.borrow().clone().unwrap()
                     };
 
                     bw_fn(var, grad);
@@ -115,8 +131,8 @@ impl<T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
     }
 
     pub fn eval_bin_op(parent: &Var<T>, op: fn(T, T) -> T) {
-        let ldata = parent.deps[0].data.borrow().unwrap();
-        let rdata = parent.deps[1].data.borrow().unwrap();
+        let ldata = parent.deps[0].data.borrow().clone().unwrap();
+        let rdata = parent.deps[1].data.borrow().clone().unwrap();
         let data = op(ldata, rdata);
         parent.set_data(data);
     }
@@ -172,11 +188,11 @@ impl<T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
     }
 
     pub fn data(&self) -> Option<T> {
-        *self.data.as_ref().borrow()
+        self.data.as_ref().borrow().clone()
     }
 
     pub fn grad(&self) -> Option<T> {
-        *self.grad.as_ref().borrow()
+        self.grad.as_ref().borrow().clone()
     }
 
     pub fn set_grad(&self, grad: T) {

@@ -6,10 +6,10 @@ macro_rules! make_arithmetic_ops_trait {
     ($name:ident, $($trait:path),+ $(,)?) => {
         paste! {
             // Create the custom trait that combines the required traits
-            pub trait $name: $($trait<Output = Self> +)+ Copy  {}
+            pub trait $name: $($trait<Output = Self> +)+ Clone  {}
 
             // Implement the custom trait for all types that satisfy the trait bounds
-            impl<T: $($trait<Output = T> +)+ Copy> $name for T {}
+            impl<T: $($trait<Output = T> +)+ Clone> $name for T {}
         }
     };
 }

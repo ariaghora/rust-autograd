@@ -12,7 +12,7 @@ pub fn add_backward<T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, pare
     if l_dep.requires_grad {
         let l_data = l_dep.data().unwrap();
         let l_current_grad = l_dep.grad().unwrap_or(l_data.get_zero_grad());
-        let new_grad = l_current_grad + parent_grad;
+        let new_grad = l_current_grad + parent_grad.clone();
         l_dep.set_grad(new_grad);
     }
 
@@ -31,7 +31,7 @@ pub fn sub_backward<T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, pare
     if l_dep.requires_grad {
         let l_data = l_dep.data().unwrap();
         let l_current_grad = l_dep.grad().unwrap_or(l_data.get_zero_grad());
-        let new_grad = l_current_grad + parent_grad;
+        let new_grad = l_current_grad + parent_grad.clone();
         l_dep.set_grad(new_grad);
     }
 
@@ -52,7 +52,7 @@ pub fn mul_backward<T: HasGrad<T> + ArithmeticOps + Debug>(parent: &Var<T>, pare
         let r_data = r_dep.data().unwrap();
 
         let l_current_grad = l_dep.grad().unwrap_or(l_data.get_zero_grad());
-        let new_grad = l_current_grad + parent_grad * r_data;
+        let new_grad = l_current_grad + parent_grad.clone() * r_data;
         l_dep.set_grad(new_grad);
     }
 
