@@ -26,9 +26,14 @@ pub trait GetSetById<T> {
     fn set_by_id(&mut self, id: uuid::Uuid, val: T);
 }
 
-pub trait Reduce<T> {
+pub trait Reduce {
     fn sum(&self) -> Self;
     fn sum_axis(&self, axis: usize) -> Self;
+}
+
+pub trait Dot {
+    type Output;
+    fn dot(&self, other: Self) -> Self::Output;
 }
 
 impl HasGrad<f32> for f32 {
@@ -38,5 +43,22 @@ impl HasGrad<f32> for f32 {
 
     fn get_default_init_grad(&self) -> Self {
         1.0
+    }
+}
+
+impl Reduce for f32 {
+    fn sum(&self) -> Self {
+        panic!("sum is not implemented for f32")
+    }
+
+    fn sum_axis(&self, _: usize) -> Self {
+        panic!("sum_axis is not implemented for f32")
+    }
+}
+
+impl Dot for f32 {
+    type Output = Self;
+    fn dot(&self, other: Self) -> Self {
+        self.mul(other)
     }
 }

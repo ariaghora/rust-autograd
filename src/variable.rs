@@ -8,15 +8,18 @@ use traits_ndarray::NDArray;
 use ndarray::{Array, CowArray, Dimension};
 
 use crate::backward_basic_ops::{add_backward, mul_backward, sub_backward};
-use crate::traits::{ArithmeticOps, HasGrad};
+use crate::backward_linalg_ops::dot_backward;
+use crate::traits::{ArithmeticOps, Dot, HasGrad, Reduce};
 use crate::traits_ndarray;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum VariableType {
     Input,
     OpAdd,
+    OpDot,
     OpSub,
     OpMul,
+    OpSum,
 }
 
 type BackwardFn<T> = fn(&Var<T>, T);
@@ -56,7 +59,10 @@ pub fn from_ndarray<'a, D: Dimension>(data: Array<f64, D>) -> Var<NDArray<'a>> {
     Var::new(data)
 }
 
-impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
+impl<'a, T> Var<T>
+where
+    T: HasGrad<T> + ArithmeticOps + Dot<Output = T> + Reduce + Debug,
+{
     pub fn new(data: T) -> Self {
         Var {
             id: uuid::Uuid::new_v4(),
@@ -145,6 +151,11 @@ impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
         let data = op(ldata, rdata);
         parent.set_data(data);
     }
+    pub fn eval_un_op(parent: &Var<T>, op: fn(T) -> T) {
+        let ldata = parent.deps[0].data.borrow().clone().unwrap();
+        let data = op(ldata);
+        parent.set_data(data);
+    }
 
     fn handle_bin_op(
         &self,
@@ -165,6 +176,20 @@ impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
         }
     }
 
+    fn handle_un_op(&self, var_type: VariableType, backward_fn: BackwardFn<T>) -> Var<T> {
+        Var {
+            id: uuid::Uuid::new_v4(),
+            data: Rc::new(RefCell::new(None)),
+            deps: vec![Box::new(self.copy())],
+            evaluated: false,
+            grad: Rc::new(RefCell::new(None)),
+            is_leaf: false,
+            requires_grad: self.requires_grad,
+            var_type: var_type,
+            backward_fn: Some(backward_fn),
+        }
+    }
+
     /// Evaluate computation graph and populate the data of intermediary variables
     pub fn eval(&mut self) {
         let sorted = Self::topological_sort(self, false);
@@ -175,6 +200,8 @@ impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
                 VariableType::OpAdd => Self::eval_bin_op(&var, |a, b| a + b),
                 VariableType::OpSub => Self::eval_bin_op(&var, |a, b| a - b),
                 VariableType::OpMul => Self::eval_bin_op(&var, |a, b| a * b),
+                VariableType::OpDot => Self::eval_bin_op(&var, |a, b| a.dot(b)),
+                VariableType::OpSum => Self::eval_un_op(&var, |a| a.sum()),
             }
         }
 
@@ -218,7 +245,7 @@ impl<'a, T: HasGrad<T> + ArithmeticOps + Debug> Var<T> {
 }
 
 /// Basic arithmetic ops implementations
-impl<'a, T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {
+impl<'a, T: ArithmeticOps + Dot<Output = T> + Reduce + HasGrad<T> + Debug> Var<T> {
     pub fn add(&self, other: &Var<T>) -> Var<T> {
         self.handle_bin_op(other, VariableType::OpAdd, add_backward)
     }
@@ -232,5 +259,16 @@ impl<'a, T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {
     }
 }
 
-/// Reduce arithmetic implementations
-impl<T: ArithmeticOps + HasGrad<T> + Debug> Var<T> {}
+/// Linalg ops implementations
+impl<'a, T: ArithmeticOps + Dot<Output = T> + Reduce + HasGrad<T> + Debug> Var<T> {
+    pub fn dot(&self, other: &Var<T>) -> Var<T> {
+        self.handle_bin_op(other, VariableType::OpDot, dot_backward)
+    }
+}
+
+/// Reduce ops implementations
+impl<'a, T: ArithmeticOps + Dot<Output = T> + Reduce + HasGrad<T> + Debug> Var<T> {
+    pub fn sum(&self) -> Var<T> {
+        self.handle_un_op(VariableType::OpSum, mul_backward)
+    }
+}

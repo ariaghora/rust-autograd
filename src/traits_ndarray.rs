@@ -1,8 +1,9 @@
 use ndarray::{arr0, Array, Axis, CowArray, Dim, IxDynImpl};
 use std::fmt::{Debug, Display};
 use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::panic;
 
-use crate::traits::{HasGrad, Reduce};
+use crate::traits::{Dot, HasGrad, Reduce};
 
 #[derive(Clone, Debug)]
 pub struct NDArray<'a>(pub CowArray<'a, f64, Dim<IxDynImpl>>);
@@ -59,7 +60,27 @@ impl<'a> Neg for NDArray<'a> {
     }
 }
 
-impl<'a, T> Reduce<T> for NDArray<'a> {
+impl<'a> Dot for NDArray<'a> {
+    type Output = NDArray<'a>;
+    fn dot(&self, other: Self) -> Self {
+        let lhs = if self.0.ndim() == 2 {
+            let shape = self.0.shape();
+            self.0.clone().into_shape((shape[0], shape[1])).unwrap()
+        } else {
+            panic!("dot() is only defined for rank-2 tensors")
+        };
+
+        let rhs = if other.0.ndim() == 2 {
+            let shape = other.0.shape();
+            other.0.clone().into_shape((shape[0], shape[1])).unwrap()
+        } else {
+            panic!("dot() is only defined for rank-2 tensors")
+        };
+        Self(CowArray::from(lhs.dot(&rhs).into_dyn()))
+    }
+}
+
+impl<'a> Reduce for NDArray<'a> {
     fn sum(&self) -> Self {
         let sum = arr0(self.0.sum());
         Self(CowArray::from(sum).into_dyn())
@@ -68,23 +89,5 @@ impl<'a, T> Reduce<T> for NDArray<'a> {
     fn sum_axis(&self, axis: usize) -> Self {
         let sum = self.0.sum_axis(Axis(axis));
         Self(CowArray::from(sum).into_dyn())
-    }
-}
-
-#[cfg(test)]
-mod test_ndarray {
-    use crate::variable::from_ndarray;
-    use ndarray::{array, Array};
-
-    #[test]
-    fn test_eval_ndarray() {
-        let mut x = from_ndarray(Array::ones([2]));
-        x.set_requires_grad(true);
-        let mut y = x.add(&x).add(&x).add(&x);
-        y.backward();
-
-        let x_grad = x.grad().unwrap().0;
-        let expected = array![4., 4.].into_dyn();
-        assert!(x_grad.eq(&expected));
     }
 }
