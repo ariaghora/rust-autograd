@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::panic;
 
-use crate::traits::{Dot, HasGrad, Reduce};
+use crate::traits::{Dot, HasGrad, Reduce, Transpose};
 
 #[derive(Clone, Debug)]
 pub struct NDArray<'a>(pub CowArray<'a, f64, Dim<IxDynImpl>>);
@@ -89,5 +89,18 @@ impl<'a> Reduce for NDArray<'a> {
     fn sum_axis(&self, axis: usize) -> Self {
         let sum = self.0.sum_axis(Axis(axis));
         Self(CowArray::from(sum).into_dyn())
+    }
+}
+
+impl<'a>  Transpose for NDArray<'a> {
+    fn t(&self) -> Self {
+        let transposed = if self.0.ndim() == 2 {
+            let tr = self.0.t();
+            let shape = tr.shape();
+            tr.clone().into_shape((shape[0], shape[1])).unwrap()
+        } else {
+            panic!("transpose() is only defined for rank-2 tensors")
+        };
+        Self(CowArray::from(transposed.into_owned().into_dyn()))
     }
 }

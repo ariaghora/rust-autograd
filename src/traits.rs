@@ -36,6 +36,12 @@ pub trait Dot {
     fn dot(&self, other: Self) -> Self::Output;
 }
 
+pub trait Transpose {
+    fn t(&self) -> Self;
+}
+
+
+
 impl HasGrad<f32> for f32 {
     fn get_zero_grad(&self) -> Self {
         0.0
@@ -60,5 +66,11 @@ impl Dot for f32 {
     type Output = Self;
     fn dot(&self, other: Self) -> Self {
         self.mul(other)
+    }
+}
+
+impl Transpose for f32 {
+    fn t(&self) -> Self {
+        *self
     }
 }
