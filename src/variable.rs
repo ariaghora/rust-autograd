@@ -9,7 +9,7 @@ use ndarray::{Array, CowArray, Dimension};
 
 use crate::backward_basic_ops::{add_backward, mul_backward, sub_backward};
 use crate::backward_linalg_ops::dot_backward;
-use crate::traits::{ArithmeticOps, Dot, HasGrad, Reduce, Transpose};
+use crate::traits::{ArithmeticOps, Dot, HasGrad, Reduce, Shape, Transpose};
 use crate::traits_ndarray;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -246,7 +246,10 @@ where
 }
 
 /// Basic arithmetic ops implementations
-impl<'a, T: ArithmeticOps + Dot<Output = T> + Reduce + HasGrad<T> + Debug> Var<T> {
+impl<'a, T> Var<T>
+where
+    T: ArithmeticOps + Dot<Output = T> + Reduce + Shape + Transpose + HasGrad<T> + Debug,
+{
     pub fn add(&self, other: &Var<T>) -> Var<T> {
         self.handle_bin_op(other, VariableType::OpAdd, add_backward)
     }
@@ -258,17 +261,13 @@ impl<'a, T: ArithmeticOps + Dot<Output = T> + Reduce + HasGrad<T> + Debug> Var<T
     pub fn mul(&self, other: &Var<T>) -> Var<T> {
         self.handle_bin_op(other, VariableType::OpMul, mul_backward)
     }
-}
 
-/// Linalg ops implementations
-impl<'a, T: ArithmeticOps + Dot<Output = T> + Reduce +Transpose+ HasGrad<T> + Debug> Var<T> {
+    /// Linalg ops implementations
     pub fn dot(&self, other: &Var<T>) -> Var<T> {
         self.handle_bin_op(other, VariableType::OpDot, dot_backward)
     }
-}
 
-/// Reduce ops implementations
-impl<'a, T: ArithmeticOps + Dot<Output = T> + Reduce +Transpose +  HasGrad<T> + Debug> Var<T> {
+    /// Reduce ops implementations
     pub fn sum(&self) -> Var<T> {
         self.handle_un_op(VariableType::OpSum, mul_backward)
     }

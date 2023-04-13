@@ -40,37 +40,7 @@ pub trait Transpose {
     fn t(&self) -> Self;
 }
 
-
-
-impl HasGrad<f32> for f32 {
-    fn get_zero_grad(&self) -> Self {
-        0.0
-    }
-
-    fn get_default_init_grad(&self) -> Self {
-        1.0
-    }
-}
-
-impl Reduce for f32 {
-    fn sum(&self) -> Self {
-        panic!("sum is not implemented for f32")
-    }
-
-    fn sum_axis(&self, _: usize) -> Self {
-        panic!("sum_axis is not implemented for f32")
-    }
-}
-
-impl Dot for f32 {
-    type Output = Self;
-    fn dot(&self, other: Self) -> Self {
-        self.mul(other)
-    }
-}
-
-impl Transpose for f32 {
-    fn t(&self) -> Self {
-        *self
-    }
+pub trait Shape {
+    fn shape(&self) -> &[usize];
+    fn ndim(&self) -> usize;
 }

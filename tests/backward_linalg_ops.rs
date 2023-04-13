@@ -25,14 +25,9 @@ mod test_var_api_v2 {
 
         z.backward();
 
-        println!("{:?}", x.grad().unwrap().0);
-        println!("{:?}", y.grad().unwrap().0);
-
         let expected_x_grad = array![[3., 5.], [3., 5.]];
         let expected_y_grad = array![[3.], [3.]];
         assert!(x.grad().unwrap().0.eq(&expected_x_grad.into_dyn()));
         assert!(y.grad().unwrap().0.eq(&expected_y_grad.into_dyn()));
     }
-
-
 }
